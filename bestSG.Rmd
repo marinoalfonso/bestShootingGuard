@@ -1,0 +1,240 @@
+---
+title: "Is Anthony Edwards the best Shooting Guard in the NBA?"
+author: "Alfonso Marino"
+date: "2024-05-20"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+![](/Users/alfonsomarino/Desktop/Progetti/nba/Screenshot%202024-05-20%20alle%2012.30.07.png)
+
+# Introduction
+
+The great performances that Anthony Edwards is churning out this post-season with his Minnesota Timberwolves are there for all to see, so much so that some have even drawn parallels with big names like Michael Jordan. Taking inspiration from [\@jeff.loko_illustrations'](https://www.instagram.com/jeff.loko_illustrations/) graphic, I too wondered if Ant-Man is currently the best Shooting Guard in the league. To resolve this question, and to be true to the graphic, the performances of the players featured on the cover were evaluated, namely: Anthony Edwards, Devin Booker, Paul George, Jaylen Brown, Donovan Mitchell, and Kyrie Irving.
+
+```{r}
+library(tidyverse)
+library(rvest)
+library(prismatic)
+library(ggrepel)
+library(nbastatR)
+library(cowplot)
+library(ggiraphExtra)
+library(BasketballAnalyzeR)
+Sys.setenv("VROOM_CONNECTION_SIZE" = 10 * 1024 * 1024)
+
+pizza_plot_list = list()
+shot_chart_list = list()
+
+# Funzione per calcolare il percentile rank
+percentile_rank <- function(x) {
+  trunc(rank(x, ties.method = "min")) / length(x) * 100
+}
+
+# Funzione per estrarre i dati e creare i grafici
+extract_and_analyze <- function(url, player_name) {
+  # Estrazione delle tabelle
+  tables_list <- read_html(url) %>%
+    html_nodes("table") %>%
+    lapply(html_table, fill = TRUE)
+  
+  # Estrazione delle statistiche perGame
+  perGame <- tables_list[[2]] %>%
+    filter(Season == "2023-24") %>%
+    select("PTS", "FG%", "3P%", "FT%", "AST", "STL", "DRB")
+  
+  # Estrazione delle statistiche avanzate
+  adv <- tables_list[[7]] %>%
+    select(-c(20, 25)) %>%
+    filter(Season == "2023-24") %>%
+    select("TS%", "USG%", "PER", "BPM", "VORP")
+ 
+  # Unione delle due tabelle
+  combined_stats <- merge(perGame, adv)
+  
+  # Aggiungere il nome del giocatore
+  combined_stats$Player <- player_name
+  
+  return(combined_stats)
+}
+
+# Lista degli URL, nomi dei giocatori e squadre
+urls <- c(
+  "https://www.basketball-reference.com/players/b/brownja02.html",
+  "https://www.basketball-reference.com/players/m/mitchdo01.html",
+  "https://www.basketball-reference.com/players/b/bookede01.html",
+  "https://www.basketball-reference.com/players/e/edwaran01.html",
+  "https://www.basketball-reference.com/players/i/irvinky01.html",
+  "https://www.basketball-reference.com/players/g/georgpa01.html"
+)
+
+players <- c("Jaylen Brown", "Donovan Mitchell", "Devin Booker", "Anthony Edwards", "Kyrie Irving", "Paul George")
+teams <- c("Boston Celtics", "Cleveland Cavaliers", "Phoenix Suns", "Minnesota Timberwolves", "Dallas Mavericks", "Los Angeles Clippers")
+
+# Applicare la funzione a ciascun URL
+stats_list <- lapply(1:length(urls), function(i) {
+  extract_and_analyze(urls[i], players[i])
+})
+
+# Combinare le statistiche di tutti i giocatori in un unico data frame
+all_stats <- bind_rows(stats_list)
+
+# Calcolare i percentile rank
+percentile_stats <- all_stats %>%
+  select(-Player) %>%
+  mutate_all(percentile_rank)
+
+# Aggiungere il nome dei giocatori
+percentile_stats$Player <- all_stats$Player
+
+# Definizione delle categorie e dei colori
+categories <- c("Offensive", "Defensive", "Advanced")
+colors <- c("#1F78B4", "#33A02C", "#FF7F00")  # Blu, verde, arancione
+
+# Mappare le statistiche alle categorie
+stat_to_category <- function(stat) {
+  if (stat %in% c("PTS", "FG%", "3P%", "FT%")) {
+    return("Scoring & Shooting")
+  } else if (stat %in% c("DRB", "STL")) {
+    return("Defensive")
+  } else {
+    return("Gameplay & Offensive Contribution")
+  }
+}
+
+# Creare i pizza plot e visualizzarli
+for (i in 1:length(players)) {
+  player_stats <- percentile_stats %>%
+    filter(Player == players[i]) %>%
+    #select(-Player) %>%
+    select("TS%", "USG%", "BPM", "VORP", "PER", "PTS", "FG%", "3P%", "FT%", "AST", "STL", "DRB")
+  
+  player_stats_long <- player_stats %>%
+    pivot_longer(cols = everything(), names_to = "stat", values_to = "value")
+  
+  # Assegnare il colore in base alla categoria
+  player_stats_long$category <- sapply(player_stats_long$stat, stat_to_category)
+  player_stats_long$color <- factor(player_stats_long$category, levels = categories, labels = colors)
+  
+  player_plot <- ggplot(player_stats_long, aes(x = stat, y = value, fill = category)) +
+    geom_bar(stat = "identity") +
+    coord_polar() +
+    ggtitle("Percentile Rankings") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.title = element_blank(),
+          axis.text = element_text(face = "bold", size = 8, colour = "gray20"),
+          legend.text = element_text(face = "bold", size = 8, colour = "gray20", family = "serif"),
+          plot.title = element_text(hjust = .5, face = "bold", size = 20, colour = "gray20", family = "serif"),
+          plot.subtitle = element_text(hjust = .5, size = 12, colour = "gray20", family = "serif")) +
+    labs(x = "", y = "", subtitle = "Compared to players considered | 23/24 Regular Season\n\n\n\n\n\n")
+  pizza_plot_list[[i]] <- player_plot
+  # Visualizzare il grafico
+  #print(player_plot)
+}
+
+shot_funct <- function(team_name, player_name, all_stats){
+  
+  player_stats <- all_stats %>%
+    filter(Player == player_name) %>%
+    select("PTS", "FG%", "3P%")
+  
+  shot_data <- teams_shots(teams = team_name, seasons = 2024) %>%
+    filter(namePlayer == player_name) %>%
+    as.data.frame()
+  
+  shot_data$xx <- shot_data$locationX / 10
+  shot_data$yy <- shot_data$locationY / 10 - 41.75
+  shot_data$typeEvent <- as.factor(shot_data$typeEvent)
+  
+  
+  # Creazione del grafico dei tiri
+  shot_chart <- shotchart(data = shot_data, x = "xx", y = "yy", scatter = TRUE, z = "typeEvent", palette = "mixed") +
+    ggtitle(label = "Shot Chart" ,subtitle = paste("PTS:", player_stats$PTS, "| FG%:", player_stats$`FG%`, "| 3P%:", player_stats$`3P%`)) +
+    theme(plot.title = element_text(hjust = .5, face = "bold", size = 20, colour = "gray20", family = "serif"),
+          legend.title = element_blank(),
+          plot.subtitle = element_text(hjust = .5, size = 12, colour = "gray20", family = "serif"),
+          legend.text = element_text(face = "bold", size = 8, colour = "gray20", family = "serif"), 
+          axis.text = element_text(face = "bold", size = 8, family = "serif"))
+  }
+  
+  for (i in 1:length(players)) {
+  # Calcolare le statistiche dei tiri per il giocatore corrente
+  shot_data <- shot_funct(teams[i], players[i], all_stats)
+  shot_chart_list[[i]] <- shot_data
+  #print(shot_data)
+  }
+
+destination_folder <- "/Users/alfonsomarino/Desktop/Progetti/nba"
+
+for (i in seq_along(shot_chart_list)) {
+  # Estrai i grafici relativi al giocatore corrente
+  shot_chart <- shot_chart_list[[i]]
+  pizza_plot <- pizza_plot_list[[i]]
+  
+  # Combina i due grafici in una griglia
+  combined_plot <- plot_grid(shot_chart, pizza_plot, nrow = 1)
+  
+  # Visualizza la griglia di grafici
+  print(combined_plot)
+
+  # Salva la griglia di grafici come immagine
+  file_name <- paste0("combined_plot_", i, ".png")
+  file_path <- file.path(destination_folder, file_name)
+  ggsave(file_path, combined_plot, width = 12, height = 6, units = "in", dpi = 300, bg = "white")
+}
+
+#inserire minuti giocati totali da tabella sito
+#mantenere dal dataset dal quale prendi i tiri, anche la colonna relativa a indicazione
+#3PT, 2PT e FT
+#questo per fare il barplot di basketballAnaòyzeR
+
+```
+
+```{r}
+bubble = ggplot(all_stats, aes(x = PER, y = `TS%`, color = VORP)) +
+  geom_point(size = 6) +
+  geom_text_repel(aes(label = Player), size = 7, family = "serif") +  # Etichette più grandi e in grassetto
+  scale_color_gradient(low = "blue", high = "red") +  # Cambia la scala dei colori
+  labs(
+    title = "Bubble Plot",
+    x = "PER",
+    y = "TS%",
+    color = "VORP"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = .5, face = "bold", size = 20, colour = "gray20", family = "serif"),
+axis.title = element_text(family = "serif", size = 15),
+    legend.text = element_text(face = "bold", size = 10, colour = "gray20", family = "serif"),
+    #legend.title = element_text(size = 12)
+  )
+
+file_path <- file.path(destination_folder, "bubble.png")
+ggsave(file_path, bubble, width = 10, height = 6, units = "in", dpi = 300, bg = "white")
+```
+
+
+```{r}
+top_10_shots <- steph %>%
+  group_by(typeEvent) %>%
+  summarise(count = n()) %>%
+  top_n(10, wt = count) %>%
+  pull(typeEvent) %>%
+  View()
+
+# Filtrare il dataset per includere solo i dieci tipi di tiri più frequenti
+filtered_dataset <- steph %>%
+  filter(typeShot %in% top_10_shots)
+
+ggplot(filtered_dataset, aes(x = distanceShot, y = typeShot, fill = typeShot)) +
+  geom_density_ridges(scale = 3, rel_min_height = 0.01) +
+  theme_ridges() + 
+  theme(legend.position = "none") +
+  labs(title = "Distribuzione dei Dieci Tipi di Tiri più Frequenti",
+       x = "Distanza del Tiro",
+       y = "Tipo di Tiro")
+```
+
